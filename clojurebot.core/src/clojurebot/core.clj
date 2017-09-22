@@ -10,113 +10,23 @@
   (:refer-clojure
    :exclude [special-symbol?])
   (:require
-   [clojure.stacktrace :refer [print-cause-trace]]
-   [clojure.string :as string]
    [cemerick.pomegranate :refer [add-dependencies]]
    [cemerick.pomegranate.aether :refer [dependency-files]]
-   [clojure.tools.nrepl.server :refer [start-server stop-server]]
-   [outpace.config :refer [defconfig defconfig!]]
-   [slack-rtm.core :as slack])
-  (:import
-   (clojure.lang DynamicClassLoader)
-   (java.net URL)
-   (org.projectodd.shimdandy ClojureRuntimeShim)))
-
-(def clojurebot-eval-jar-path
-  (System/getenv "CLOJUREBOT_EVAL_PATH"))
-
-(defonce nrepl-server
-  (atom nil))
-
-(defn missing-dep?
-  [dependencies dep]
-  (not (some (comp #{dep} first) dependencies)))
-
-(defn conj-if-missing
-  [dependencies [dependency-name _ :as dependency]]
-  (cond-> dependencies
-    (missing-dep? dependencies dependency-name) (conj dependency)))
-
-(def latest-clojure
-  '[org.clojure/clojure "1.8.0"])
-
-(def shimdandy-impl
-  '[org.projectodd.shimdandy/shimdandy-impl "1.2.0"])
-
-(def repositories
-  (merge cemerick.pomegranate.aether/maven-central
-         {"clojars" "https://clojars.org/repo"}))
-
-(def autorequires
-  ["clojurebot.eval"])
-
-(defn create-environment
-  [dependencies]
-  (let [loader (doto (DynamicClassLoader. (ClassLoader/getSystemClassLoader))
-                 (.addURL (URL. (str "file:" clojurebot-eval-jar-path))))
-        dependencies (-> dependencies
-                         (conj-if-missing latest-clojure)
-                         (conj-if-missing shimdandy-impl))
-        dependencies (add-dependencies :classloader loader
-                                       :coordinates dependencies
-                                       :repositories repositories)
-        ;; these must be passed along so permissions can be configured so the
-        ;; source can be read from them
-        jar-file-paths (for [file (dependency-files dependencies)]
-                         (.getCanonicalPath file))]
-    (doto (ClojureRuntimeShim/newRuntime loader)
-      (.require (into-array String autorequires))
-      (.invoke "clojurebot.eval/init" jar-file-paths))))
-
-(defn eval-in-environment
-  [env string]
-  (try
-    (.invoke env "clojurebot.eval/eval" string)
-    (catch Throwable t
-      ["" (with-out-str (print-cause-trace t))])))
-
-(defn raw-eval-in-environment
-  [env string]
-  (->> (.invoke env "clojure.core/read-string" string)
-       (.invoke env "clojure.core/eval")))
-
-(def default-dependencies
-  '[[org.clojure/clojure "1.8.0"]])
-
-(defconfig! token)
-
-(defonce slack-connection (atom nil))
-
-(defconfig log-channel "C76MJ835X")
-
-(defn send-message*
-  [message]
-  (slack/send-event (:dispatcher @slack-connection) message))
-
-(defn log
-  [& message]
-  (when log-channel
-    (send-message* {:type "message"
-                    :channel log-channel
-                    :text (string/join " " message)
-                    :mrkdwn false})))
-
-(defn info
-  [& message]
-  (apply log [(str "INFO: " (string/join " " message))]))
-
-(defn error
-  [& message]
-  (apply log [(str "ERR : " (string/join " " message))]))
+   [cider.nrepl :refer [cider-nrepl-handler]]
+   [clojure.string :as string]
+   [clojure.tools.nrepl.server :refer [start-server]]
+   [clojurebot.core.evaluator :as eval]
+   [clojurebot.core.slack :as slack]
+   [clojurebot.core.slack.log :as log]
+   [outpace.config :refer [defconfig defconfig!]]))
 
 (defn send-message
-  [message channel]
+  [conn message channel]
   (let [msg {:type "message"
              :channel channel
              :text message}]
-    (send-message* msg)
-    (when log-channel
-      (info (str "->" (pr-str msg))))))
+    (slack/send-message* conn msg)
+    (log/info conn (str "->" (pr-str msg)))))
 
 (defn special-symbol?
   [sym]
@@ -128,105 +38,81 @@
     (when (and (list? form) (special-symbol? (first form)))
       form)))
 
-(defconfig bot-name
-  "clojurebot")
-
-(def mention-regex
-  #"\A(<@U.*> )(?:.|\n)*\z")
-
-(defn mention?
-  [text]
-  (re-matches mention-regex text))
-
-(defn remove-mention
-  [text]
-  (let [[_ m] (re-matches mention-regex text)]
-    (subs text (count m))))
-
-(def wrapped-regex
-  #"\A`+(.*)`+\z")
-
-(defn wrapped?
-  [text]
-  (re-matches wrapped-regex text))
-
-(defn unwrap
-  [text]
-  (let [[_ text] (re-matches wrapped-regex text)]
-    text))
-
-(defn clean-text
-  [text]
-  (cond-> text
-    (wrapped? text) unwrap
-    (mention? text) remove-mention))
-
 (defonce environments
   (atom {}))
 
-(defn register-environment
+(defn create-environment
   [user dependencies]
-  (let [env (create-environment dependencies)]
+  (let [env (eval/make-environment dependencies)]
     (swap! environments assoc user [env (pr-str dependencies)])))
 
 (defmulti handle-special (comp ffirst list))
 
 (defmethod handle-special 'create-environment
-  [[_ dependencies] channel user]
-  (register-environment user dependencies)
-  (send-message (str "Created environment: " (pr-str dependencies)) channel))
+  [[_ dependencies] conn channel user]
+  (create-environment user dependencies)
+  (send-message conn
+                (str "```;; Created environment: " (pr-str dependencies) "```")
+                channel))
 
 (defmethod handle-special 'destroy-environment
-  [_ channel user]
+  [_ conn channel user]
   (let [[env dependencies] (get @environments user)]
     (.close env)
     (swap! environments dissoc user)
-    (send-message (str "Destroyed environment: " dependencies) channel)))
+    (send-message conn
+                  (str "```;; Destroyed environment: " dependencies "```")
+                  channel)))
 
 (defmethod handle-special :default
-  [form channel channel user]
-  (send-message (str "You have sent an unknown special form: " (pr-str form))
+  [form conn channel user]
+  (send-message conn
+                (str "```;; You have sent an unknown special form: "
+                     (pr-str form)
+                     "```")
                 channel))
 
 (defn handle-normal
-  [text channel user]
+  [text conn channel user]
   (let [user-env (get @environments user)
         [user-env? [env dependencies]] (if user-env
                                          [true user-env]
                                          [false (get @environments :default)])
-        [out err] (eval-in-environment env text)]
-    (send-message
-     (str (when user-env?
-            (str "```;; Using " dependencies "```"
-                 (when (or (seq out) (seq err))
-                   "\n")))
-          (when (seq out)
-            (str "```"
-                 out
-                 "```"
-                 (when (seq err)
-                   "\n\n")))
-          (when (seq err)
-            (str "*```" err "```*")))
-     channel)))
+        [out err] (eval/eval-in-environment env text)
+        [out err] (if user-env?
+                    (cond
+                      (or (seq out) (empty? err))
+                      [(str ";; Using " dependencies "\n" out) err]
+                      :else
+                      [out (str ";; Using " dependencies "\n" err)])
+                    [out err])]
+    (send-message conn
+                  (str (when (seq out)
+                         (str "```" out "```"
+                              (when (seq err)
+                                "\n\n")))
+                       (when (seq err)
+                         (str "*```" err "```*")))
+                  channel)))
 
-(defn handle-message
-  [{:keys [text channel user] :as message}]
-  (when (not= log-channel channel)
-    (info (str "<-" (pr-str message)))
-    (if-let [form (special-form? (clean-text text))]
-      (handle-special form channel user)
-      (if (string/starts-with? text "```")
-        (handle-normal (clean-text text) channel user)
-        (info "Ignoring message:" text)))))
+(defn handler-constructor
+  [conn]
+  (fn handle-message [{:keys [text channel user] :as message}]
+    (when (string/starts-with? text "```")
+      (log/info conn (str "<-" (pr-str message)))
+      (let [text (slack/clean-text text)]
+        (if-let [form (special-form? text)]
+          (handle-special form conn channel user)
+          (handle-normal text conn channel user))))))
+
+(defconfig default-dependencies
+  '[[org.clojure/clojure "1.8.0"]])
+
+(defconfig! token)
 
 (defn main
   "I don't do a whole lot ... yet."
   []
-  (reset! nrepl-server (start-server :port 1980))
-  (reset! slack-connection (slack/connect token))
-  (register-environment :default '[[org.clojure/clojure "1.8.0"]])
-  (let [{:keys [events-publication]} @slack-connection]
-    (slack/sub-to-event events-publication :message #(#'handle-message %))
-    (slack/sub-to-event events-publication :error prn)
-    (println "Hello, World!")))
+  (start-server :port 1980 :handler cider-nrepl-handler)
+  (create-environment :default default-dependencies)
+  (slack/start token handler-constructor))
