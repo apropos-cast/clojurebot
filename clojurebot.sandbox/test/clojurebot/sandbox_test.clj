@@ -6,10 +6,10 @@
 ;;;;
 ;;;; This Source Code Form is "Incompatible With Secondary Licenses", as defined
 ;;;; by the Mozilla Public License, v. 2.0.
-(ns clojurebot.eval-test
+(ns clojurebot.sandbox-test
   (:require
    [clojure.test :refer :all]
-   [clojurebot.eval :refer :all]))
+   [clojurebot.sandbox :refer :all]))
 
 (deftest a-test
   (testing "FIXME, I fail."

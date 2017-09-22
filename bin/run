@@ -7,8 +7,8 @@ popd
 pushd clojurebot.bootstrap
 lein do clean, uberjar
 CLOJUREBOT_CORE_PATH=../clojurebot.core/target/uberjar/clojurebot.core-0.1.0-SNAPSHOT-standalone.jar \
-  CLOJUREBOT_EVAL_PATH=../clojurebot.eval/src/ \
+  CLOJUREBOT_SANDBOX_PATH=../clojurebot.sandbox/src/ \
   java -Dconfig.edn=../clojurebot.core/config.edn \
-  -Djava.security.policy=../clojurebot.eval/example.policy \
+  -Djava.security.policy=../clojurebot.sandbox/example.policy \
   -jar target/uberjar/clojurebot.bootstrap-0.1.0-SNAPSHOT-standalone.jar
 popd

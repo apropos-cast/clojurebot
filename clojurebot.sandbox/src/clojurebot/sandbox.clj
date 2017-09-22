@@ -6,7 +6,7 @@
 ;;;;
 ;;;; This Source Code Form is "Incompatible With Secondary Licenses", as defined
 ;;;; by the Mozilla Public License, v. 2.0.
-(ns clojurebot.eval
+(ns clojurebot.sandbox
   (:refer-clojure :exclude [eval])
   (:require
    [clojurebot.clojail.core :as clojail]
@@ -27,8 +27,8 @@
                     clojail.jvm/domain
                     clojail.jvm/context)
         sandbox (clojail/sandbox secure-tester-without-def :context context)]
-    ;; this is kind of ugly, but is meant to hide `sandbox` from the code being
-    ;; evaluated.  this is not strictly necessary since we already blacklist all
+    ;; This is kind of ugly, but is meant to hide `sandbox` from the code being
+    ;; evaluated.  This is not strictly necessary since we already blacklist all
     ;; clojurebot.* namespaces, but still
     (defn eval
       "Evaluate a string of clojure code in a sandbox."

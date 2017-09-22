@@ -37,15 +37,15 @@
          {"clojars" "https://clojars.org/repo"}))
 
 (def autorequires
-  ["clojurebot.eval"])
+  ["clojurebot.sandbox"])
 
-(def clojurebot-eval-jar-path
-  (System/getenv "CLOJUREBOT_EVAL_PATH"))
+(def clojurebot-sandbox-jar-path
+  (System/getenv "CLOJUREBOT_SANDBOX_PATH"))
 
 (defn make-environment
   [dependencies]
   (let [loader (doto (DynamicClassLoader. (ClassLoader/getSystemClassLoader))
-                 (.addURL (URL. (str "file:" clojurebot-eval-jar-path))))
+                 (.addURL (URL. (str "file:" clojurebot-sandbox-jar-path))))
         dependencies (-> dependencies
                          (conj-if-missing latest-clojure)
                          (conj-if-missing shimdandy-impl))
@@ -58,7 +58,7 @@
                          (.getCanonicalPath file))]
     (doto (ClojureRuntimeShim/newRuntime loader)
       (.require (into-array String autorequires))
-      (.invoke "clojurebot.eval/init" jar-file-paths))))
+      (.invoke "clojurebot.sandbox/init" jar-file-paths))))
 
 (defn exception->response
   [e]
@@ -67,7 +67,7 @@
 (defn eval-in-environment
   [env string]
   (try
-    (.invoke env "clojurebot.eval/eval" string)
+    (.invoke env "clojurebot.sandbox/eval" string)
     (catch ExecutionException e
       (exception->response (.getCause e)))
     (catch Throwable t
