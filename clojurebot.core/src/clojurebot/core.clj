@@ -10,8 +10,6 @@
   (:refer-clojure
    :exclude [special-symbol?])
   (:require
-   [cemerick.pomegranate :refer [add-dependencies]]
-   [cemerick.pomegranate.aether :refer [dependency-files]]
    [cider.nrepl :refer [cider-nrepl-handler]]
    [clojure.string :as string]
    [clojure.tools.nrepl.server :refer [start-server]]

@@ -14,6 +14,7 @@
   (:import
    (clojure.lang DynamicClassLoader)
    (java.net URL)
+   (java.util.concurrent ExecutionException)
    (org.projectodd.shimdandy ClojureRuntimeShim)))
 
 (defn missing-dep?
@@ -67,7 +68,7 @@
   [env string]
   (try
     (.invoke env "clojurebot.eval/eval" string)
-    (catch java.util.concurrent.ExecutionException e
+    (catch ExecutionException e
       (exception->response (.getCause e)))
     (catch Throwable t
       (exception->response t))))
