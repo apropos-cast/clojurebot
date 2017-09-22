@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+pushd clojurebot.core
+lein do clean, uberjar
+popd
+
+pushd clojurebot.bootstrap
+lein do clean, uberjar
+CLOJUREBOT_CORE_PATH=../clojurebot.core/target/uberjar/clojurebot.core-0.1.0-SNAPSHOT-standalone.jar \
+  CLOJUREBOT_EVAL_PATH=../clojurebot.eval/src/ \
+  java -Djava.security.policy=example.policy -jar target/uberjar/clojurebot.bootstrap-0.1.0-SNAPSHOT-standalone.jar
+popd
