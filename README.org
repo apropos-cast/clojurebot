@@ -5,7 +5,76 @@
   Clojure code.
 ** How is this different than all the other Clojure evaluating chat bots?
    /This bot allows users to load random code from the Internet./
-  
+
+   Each user can create their own evaluation environment using custom
+   dependencies, including different versions of Clojure.  Each environment is
+   isolated from all the others, with the exception of one share default
+   evaluation environment.
+** How it works
+   There is a single shared evaluation environment called the "default"
+   environment.  This shared environment is running the latest release of
+   Clojure (1.8.0 at this time).
+
+   Unless a user creates a new evaluation environment, all of their code will be
+   evaluated in the default environment, and any ~def~s will be shared by all
+   users.
+
+   /Conventionally all messages sent to the bot will be prefixed with '->' and
+   all messages sent by the bot will be prefixed by '<-'./
+
+   #+BEGIN_EXAMPLE
+   -> ```(map inc (range 10))```
+   <- ```(1 2 3 4 5 6 7 8 9 10)```
+   -> ```*clojure-version*```
+   <- ```{:major 1, :minor 8, :incremental 0, :qualifier nil}```
+   #+END_EXAMPLE
+
+   A user must surround the code with triple ticks, otherwise the bot will
+   ignore the message.
+
+   A user may create their own evaluation environment by executing the
+   ~create-environment~ special form:
+
+   #+BEGIN_EXAMPLE
+   -> ```(create-environment [[org.clojure/clojure "1.4.0"]])```
+   <- ```;; Created environment: [[org.clojure/clojure "1.4.0"]]```
+   -> ```*clojure-version*```
+   <- ;; Using [[org.clojure/clojure "1.4.0"]]
+      {:major 1, :minor 4, :incremental 0, :qualifier nil}
+   #+END_EXAMPLE
+
+   A user will have all their code evaluated in their custom environment until
+   they destroy it (as a note the bot will prefix each response with the custom
+   environment).
+
+   #+BEGIN_EXAMPLE
+   -> ```(destroy-environment [[org.clojure/clojure "1.4.0"]])```
+   <- ```;; Destroyed environment: [[org.clojure/clojure "1.4.0"]]```
+   #+END_EXAMPLE
+** Architecture
+   From the user perspective it is pretty simple as you can see above, but the
+   implementation is a little more complicated.
+
+   It is possible to run multiple versions of Clojure in the same JVM, if you
+   can isolate them in different ClassLoaders.  However, this is not possible to
+   do with a Clojure program, as soon as the first version of Clojure is loaded
+   that is the version you get.
+
+   However, this is possible with the ~shimdiddy~ library and a Java
+   bootstrapping application that can load the first version of Clojure in a
+   child ClassLoader.  This version of Clojure can then orchestrate loading
+   other versions of Clojure and/or other dependencies as siblings to its own
+   Classloader.
+
+   There are three components to clojurebot's architecture:
+
+   1. clojurebot.bootstrap: a Java application that loads the core application
+      in a child ClassLoader.
+   2. clojurebot.core: a clojure application that can orchestrate creating
+      sandboxed evaluation environments.
+   3. clojurebot.sandbox: a sandboxing library that is responsible for keeping
+      each evaluation environment secure by configuring a Java security domain
+      and filtering Clojure forms before they are evaluated.
 * License
   #+BEGIN_EXAMPLE
   Copyright © Paul Stadig.  All rights reserved.
