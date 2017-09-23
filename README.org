@@ -3,12 +3,19 @@
 * clojurebot
   A constellation of projects that together make a Slack bot that will evaluate
   Clojure code.
+
+  *This project is not intended to be used as a public chatbot.* Users can
+  load arbitrary dependencies---and though they are sandboxed---this is kind of
+  risky, to say the least.
+
+  Also, if there is a potentially unbounded number of users, one could pretty
+  easily DoS the chatbot causing it to run out of memory and die.
 ** How is this different than all the other Clojure evaluating chat bots?
    /This bot allows users to load random code from the Internet./
 
    Each user can create their own evaluation environment using custom
    dependencies, including different versions of Clojure.  Each environment is
-   isolated from all the others, with the exception of one share default
+   isolated from all the others, with the exception of one shared, default
    evaluation environment.
 ** How it works
    There is a single shared evaluation environment called the "default"
@@ -16,11 +23,10 @@
    Clojure (1.8.0 at this time).
 
    Unless a user creates a new evaluation environment, all of their code will be
-   evaluated in the default environment, and any ~def~s will be shared by all
+   evaluated in the default environment, and any ~defs~ will be shared by all
    users.
 
-   /Conventionally all messages sent to the bot will be prefixed with '->' and
-   all messages sent by the bot will be prefixed by '<-'./
+   /In these examples it is my convention that all messages sent to the bot will be prefixed with '->' and all messages sent by the bot will be prefixed by '<-'.  These prefixes are not part of the message text./
 
    #+BEGIN_EXAMPLE
    -> ```(map inc (range 10))```
@@ -56,25 +62,71 @@
    implementation is a little more complicated.
 
    It is possible to run multiple versions of Clojure in the same JVM, if you
-   can isolate them in different ClassLoaders.  However, this is not possible to
-   do with a Clojure program, as soon as the first version of Clojure is loaded
-   that is the version you get.
+   can isolate them in different ~ClassLoaders~.  However, this is not possible
+   to do with a Clojure program, as soon as the first version of Clojure is
+   loaded that is the version you get.
 
-   However, this is possible with the ~shimdiddy~ library and a Java
-   bootstrapping application that can load the first version of Clojure in a
-   child ClassLoader.  This version of Clojure can then orchestrate loading
-   other versions of Clojure and/or other dependencies as siblings to its own
-   Classloader.
+   However, this is possible with [[https://github.com/projectodd/shimdiddy][shimdiddy]] and a Java bootstrapping application
+   that can load the first version of Clojure in a child ~ClassLoader~.  This
+   version of Clojure can then orchestrate loading other versions of Clojure
+   and/or dependencies as siblings to its own ~ClassLoader~.
 
    There are three components to clojurebot's architecture:
 
-   1. clojurebot.bootstrap: a Java application that loads the core application
+   1. ~clojurebot.bootstrap~: a Java application that loads the core application
       in a child ClassLoader.
-   2. clojurebot.core: a clojure application that can orchestrate creating
+   2. ~clojurebot.core~: a clojure application that can orchestrate creating
       sandboxed evaluation environments.
-   3. clojurebot.sandbox: a sandboxing library that is responsible for keeping
+   3. ~clojurebot.sandbox~: a sandboxing library that is responsible for keeping
       each evaluation environment secure by configuring a Java security domain
       and filtering Clojure forms before they are evaluated.
+*** clojurebot.bootstrap
+    ~clojurebot.bootstrap~ is a simple Java project that will load
+    ~clojurebot.core~ in child ~ClassLoader~.  That's really all it does!  If
+    ~clojurebot.core~ were loaded directly by the application ~ClassLoader~,
+    then it would not be possible to load any other versions of Clojure, and
+    every evaluation environment would see ~clojurebot.core~ and all of its
+    dependencies.
+
+    The bootstrapper gives us a clean application ~ClassLoader~ from which we
+    can create any number of children ~ClassLoaders~ with different versions of
+    Clojure and arbitrary dependencies.
+*** clojurebot.core
+    ~clojurebot.core~ is the meat of the bot.  It:
+    1. Runs an nREPL server with cider middleware on port 1980.  You can easily
+       connect emacs to it and poke around in the bot while it is running.
+    2. Connects to slack and listens for messages from users.  Some messages
+       (special forms like ~create-environment~) are evaluated by
+       ~clojurebot.core~, but the others are shipped off to an evaluation
+       environment.
+    3. Manages evaluation environments.  Other than the default evaluation
+       environment, ~clojurebot.core~ will create and destroy user evaluation
+       environments.  When a message comes in from a user, it will figure out
+       which environment to use, and send the message there for evaluation.
+*** clojurebot.sandbox
+    ~clojurebot.sandbox~ is added as a dependency to each evaluation
+    environment.  Code sent for evaluation is given to ~clojurebot.sandbox~, and
+    it will filter the code for potentially "unsafe" clojure forms, and
+    establish a restricted security domain in which to run the code.
+
+    The Clojure sandboxing is done using [[https://github.com/Raynes/clojail][clojail]]. clojail does partial macro
+    expansion and then rejects code for evaluation that mentions blacklisted
+    Java classes, vars, namespaces, and such.  It then establishes a restricted
+    security domain in which to execute the code.
+   
+    Evaluated code has almost no Java permissions.  It is allowed to get the
+    declared methods of classes (as Clojure code often uses reflection to
+    interact with Java), and it has read access to the jars of its dependencies
+    (those specified when the environment was originally created) so that it can
+    find and load code from them.
+** Running it
+   There is a script at ~bin/run~ that will build the components and run the
+   bot.
+
+   The bot uses [[https://github.com/outpace/config][outpace/config]] for a couple of required configuration values.  You
+   should run ~lein run -m outpace.config.generate~ in the ~clojurebot.core~
+   directory to generate a ~config.edn~ template.  Once you fill in the values,
+   you should be good to go.
 * License
   #+BEGIN_EXAMPLE
   Copyright © Paul Stadig.  All rights reserved.
@@ -86,3 +138,10 @@
   This Source Code Form is "Incompatible With Secondary Licenses", as defined by
   the Mozilla Public License, v. 2.0.
   #+END_EXAMPLE
+
+  The dependencies of ~clojurebot.sandbox~ are directly vendored in its code, so
+  that they will not conflict with the dependencies loaded for evaluation.  It
+  includes code from [[https://github.com/Raynes/clojail][clojail]], [[http://github.com/Raynes/bultitude][bultitude]], [[https://github.com/amalloy/useful][useful]], [[https://github.com/tobias/dynapath][dynapath]], and [[https://github.com/technomancy/serializable-fn][serializable-fn]].
+
+  Each of these dependencies is licensed under the Eclipse Public License.  More
+  information can be found at the respective repositories.
